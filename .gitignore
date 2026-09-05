@@ -1,0 +1,11 @@
+# Environments
+venv/
+__pycache__/
+*.pyc
+
+# Environment variables (CRITICAL)
+.env
+
+# Data and Logs
+data/
+*.log
