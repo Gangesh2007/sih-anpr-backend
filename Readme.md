@@ -65,6 +65,7 @@ PLATE_MIN_WIDTH=60
 PLATE_MIN_HEIGHT=20
 BLUR_THRESHOLD=100.0
 MIN_PLATE_QUALITY=0.4
+```
 
 **4. Setup the Database:**
 Ensure your PostgreSQL server is running and the `anpr_db` database is created.
