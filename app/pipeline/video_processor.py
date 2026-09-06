@@ -53,17 +53,23 @@ class VideoProcessor:
 
             frames_processed = 0
             for frame in source.get_frames():
+                frames_processed += 1
+                
+                # Add logging so the terminal doesn't appear frozen
+                if frames_processed % 15 == 0:
+                    logger.info(f"Processed {frames_processed} frames...")
+
                 detections = self.vehicle_detector.detect(frame)
                 tracks = self.tracker.update(frame, detections)
                 
                 for track in tracks:
                     if track.status in [TrackStatus.NEW, TrackStatus.ACTIVE]:
-                        self._process_active_track(frame, track)
+                        # Pass frames_processed to apply rate-limiting
+                        self._process_active_track(frame, track, frames_processed)
                     elif track.status == TrackStatus.LOST and track.plate_observations:
                         self._finalize_track(db, track)
                         track.plate_observations.clear() # Prevent duplicate saves
                         
-                frames_processed += 1
                 if max_frames and frames_processed >= max_frames:
                     break
             
@@ -81,7 +87,11 @@ class VideoProcessor:
             logger.info(f"Finished processing stream for {self.camera_id}")
 
 
-    def _process_active_track(self, frame, track):
+    def _process_active_track(self, frame, track, frame_count: int = 0):
+        # Network deadlock protection: Only ping Roboflow every 5 frames
+        if frame_count % 5 != 0:
+            return
+            
         x1, y1, x2, y2 = map(int, track.last_bbox)
         x1, y1 = max(0, x1), max(0, y1)
         x2, y2 = min(frame.width, x2), min(frame.height, y2)
@@ -113,51 +123,68 @@ class VideoProcessor:
                         track.plate_observations.append(obs)
 
     def _finalize_track(self, db, track):
-        final_result = OCRAggregator.aggregate(track.plate_observations)
-        if not final_result:
+        if not track.plate_observations:
             return
 
-        logger.info(f"Saving Track {track.local_track_id} to DB with Plate: {final_result.plate_number}")
+        # --- DIAGNOSTIC PRINT BLOCK ---
+        print(f"\n--- DEBUG: Finalizing Track {track.local_track_id} ---")
+        print(f"Total observations collected: {len(track.plate_observations)}")
+        for i, obs in enumerate(track.plate_observations):
+            text_len = len(obs.normalized_text) if obs.normalized_text else 0
+            print(f"  [{i}] Text: '{obs.normalized_text}' (Len: {text_len}), OCR Conf: {obs.ocr_confidence}")
+        # ------------------------------
+
+        final_result = OCRAggregator.aggregate(track.plate_observations)
         
-        # Save the Track
-        db_track = Track(
-            camera_id=self.camera_id,
-            local_track_id=track.local_track_id,
-            first_seen=track.first_seen,
-            last_seen=track.last_seen,
-            vehicle_type=track.vehicle_type,
-            vehicle_color=track.vehicle_color,
-            status=track.status.value
-        )
-        db.add(db_track)
-        db.flush() # Flush to get the auto-incremented Track ID
+        if not final_result:
+            logger.warning(f"Track {track.local_track_id} dropped: OCRAggregator rejected the plates.")
+            return
+        
+        try:
+            # Save the Track
+            db_track = Track(
+                camera_id=self.camera_id,
+                local_track_id=track.local_track_id,
+                first_seen=track.first_seen,
+                last_seen=track.last_seen,
+                vehicle_type=track.vehicle_type,
+                vehicle_color=track.vehicle_color,
+                status=track.status.value
+            )
+            db.add(db_track)
+            db.flush() # Flush to get the auto-incremented Track ID
 
-        # Save the aggregated Observation
-        # ... existing code in _finalize_track ...
-        db_obs = DBPlateObservation(
-            track_id=db_track.id,
-            frame_number=track.plate_observations[-1].frame_number,
-            timestamp=track.plate_observations[-1].timestamp,
-            plate_text_raw=final_result.plate_number, 
-            plate_number_normalized=final_result.plate_number,
-            ocr_confidence=final_result.confidence,
-            plate_detection_confidence=track.plate_observations[-1].plate_detection_confidence,
-            quality_score=track.plate_observations[-1].quality_score
-        )
-        db.add(db_obs)
-        db.commit() # Commit the local track data first
+            # Save the aggregated Observation
+            db_obs = DBPlateObservation(
+                track_id=db_track.id,
+                frame_number=track.plate_observations[-1].frame_number,
+                timestamp=track.plate_observations[-1].timestamp,
+                plate_text_raw=final_result.plate_number, 
+                plate_number_normalized=final_result.plate_number,
+                ocr_confidence=final_result.confidence,
+                plate_detection_confidence=track.plate_observations[-1].plate_detection_confidence,
+                quality_score=track.plate_observations[-1].quality_score
+            )
+            db.add(db_obs)
+            db.commit() # Commit the local track data first
+            
+            logger.info(f"Successfully committed Track {track.local_track_id} to PostgreSQL.")
 
-        # NEW: Resolve Global Identity
-        GlobalIdentityResolver.resolve_and_store(
-            db=db,
-            track=db_track,
-            plate_text=final_result.plate_number,
-            plate_conf=final_result.confidence
-        )
+            # Resolve Global Identity
+            GlobalIdentityResolver.resolve_and_store(
+                db=db,
+                track=db_track,
+                plate_text=final_result.plate_number,
+                plate_conf=final_result.confidence
+            )
 
-        # Check against Redis Watchlist
-        self.alert_service.check_and_alert(
-            plate_number=final_result.plate_number,
-            camera_id=self.camera_id,
-            confidence=final_result.confidence
-        )
+            # Check against Watchlist
+            self.alert_service.check_and_alert(
+                plate_number=final_result.plate_number,
+                camera_id=self.camera_id,
+                confidence=final_result.confidence
+            )
+            
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Database or processing error while finalizing track {track.local_track_id}: {e}")

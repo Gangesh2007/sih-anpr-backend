@@ -2,6 +2,11 @@
 from pydantic import BaseModel
 from typing import List
 
+class OCRResult(BaseModel):
+    raw_text: str
+    normalized_text: str
+    confidence: float
+
 class PlateObservation(BaseModel):
     frame_number: int
     timestamp: float

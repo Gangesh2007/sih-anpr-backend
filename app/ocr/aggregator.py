@@ -1,4 +1,3 @@
-# app/ocr/aggregator.py
 from typing import List, Optional
 from app.schemas.observation import PlateObservation, AggregatedPlateResult
 
@@ -12,7 +11,8 @@ class OCRAggregator:
         frames_map = {}
         
         for obs in observations:
-            if not obs.normalized_text or len(obs.normalized_text) < 4:
+            # RELAXED FILTER: Allow fragments of at least 2 characters for testing
+            if not obs.normalized_text or len(obs.normalized_text) < 2:
                 continue
                 
             # Weight = OCR confidence * Plate Detection Confidence * Quality

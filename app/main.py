@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.core.logging import logger
 from app.api import health, cameras, search, trajectories, watchlist, alerts, jobs  # <-- NEW import
 
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.PROJECT_NAME,
