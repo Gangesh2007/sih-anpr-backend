@@ -46,17 +46,25 @@ DATABASE_URL="postgresql://postgres:YOUR_PASSWORD@localhost:5432/anpr_db"
 ROBOFLOW_API_KEY="your_api_key_here"
 ROBOFLOW_MODEL_ID="license-plate-recognition-rxg4e/4"
 
-# CV Thresholds
-VEHICLE_CONF_THRESHOLD=0.5
-PLATE_CONF_THRESHOLD=0.5
-OCR_CONF_THRESHOLD=0.70
+# Model & Core Configuration
+VEHICLE_MODEL_PATH="yolo26s.pt"
+OCR_PROVIDER="paddleocr"
+STORAGE_PATH="./data"
+
+# Pipeline Optimization
+PROCESS_EVERY_N_FRAMES=3   # Mitigates API rate limits and prevents processing deadlocks
+TRACK_MAX_AGE=30
+
+# Computer Vision Thresholds (Tuned for real-world conditions)
+VEHICLE_CONF_THRESHOLD=0.40
+PLATE_CONF_THRESHOLD=0.50
+OCR_CONF_THRESHOLD=0.35      # Lowered to allow the voting aggregator to process low-confidence fragments
 
 # Quality Gating
-PLATE_MIN_WIDTH=15
-PLATE_MIN_HEIGHT=5
-BLUR_THRESHOLD=50.0
+PLATE_MIN_WIDTH=60
+PLATE_MIN_HEIGHT=20
+BLUR_THRESHOLD=100.0
 MIN_PLATE_QUALITY=0.4
-```
 
 **4. Setup the Database:**
 Ensure your PostgreSQL server is running and the `anpr_db` database is created.
